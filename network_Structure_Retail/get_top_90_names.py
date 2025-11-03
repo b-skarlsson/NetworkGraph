@@ -17,6 +17,6 @@ df_top_90 = df_sorted[df_sorted['CumulativeSum'] <= 0.9]
 output_path = r"C:\Users\b-elladjarv\Desktop\NetworkGraph\network_Structure_Retail.py\top_90_percent_tables_from_CumulativeShare.csv"
 df_top_90[['TableName']].to_csv(output_path, index=False)
 
-print(f"✅ Klar! Fil sparad till: {output_path}")
+print(f"✅✅✅✅✅ Klar! Fil sparad till: {output_path}✅✅✅✅✅")
 print("Tabeller som tillsammans motsvarar 90% av totalen:")
 print(df_top_90[['TableName']])

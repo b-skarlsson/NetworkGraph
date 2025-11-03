@@ -182,6 +182,17 @@ node_colors = [(1, 1 - (out_degrees.get(n, 0) / max_out), 1 - (out_degrees.get(n
 min_val, max_val = min(size_dict.values()), max(size_dict.values())
 node_sizes = [300 + 1200 * ((size_dict[n] - min_val) / (max_val - min_val)) for n in G.nodes()]
 
+
+# --- 7. Colors & sizes ---
+out_degrees = dict(G.out_degree())
+max_out = max(out_degrees.values()) if out_degrees else 1
+node_colors = [(1, 1 - (out_degrees.get(n, 0) / max_out), 1 - (out_degrees.get(n, 0) / max_out)) for n in G.nodes()]
+
+# --- Make radius proportional to sqrt(share) ---
+min_share, max_share = min(size_dict.values()), max(size_dict.values())
+scale_factor = 30000  # adjust if you want bigger/smaller bubbles
+
+node_sizes = [scale_factor * (size_dict[n] ** 0.5) for n in G.nodes()]
 # --- 8. Layout ---
 connected_nodes = [n for n in G.nodes() if G.degree(n) > 0]
 pos_main = nx.kamada_kawai_layout(G.subgraph(connected_nodes), scale=3.0)
