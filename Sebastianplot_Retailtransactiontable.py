@@ -84,15 +84,14 @@ else:
     print(f"Total cumulative share of these tables: {subgraph_share:.6f}")
     print(f"Share of total storage: {percent_of_total:.2f}%")
    
-   # --- 7. Save reachable tables with their cumulative share ---
-    reachable_data = [
-        {"TableName": n, "CumulativeShare": size_dict.get(n, 0)}
-        for n in subG.nodes()
-    ]
-    reachable_df = pd.DataFrame(reachable_data)
-    reachable_df.sort_values("CumulativeShare", ascending=False, inplace=True)
+   
+    # --- 7. Save names of drawn tables to CSV ---
+    output_filename = "direct_relations_from_RetailTransactionTable.csv"
+    export_df = pd.DataFrame({"TableName": [root] + sorted(successors)})
+    export_df.to_csv(output_filename, index=False, encoding="utf-8")
 
-    output_file = "reachable_tables_from_retailtransactiontable.csv"
-    reachable_df.to_csv(output_file, index=False)
-
-    print(f"\n✅ Saved {len(reachable_df)} tables to '{output_file}'")
+    print(f"\n✅ Saved table list to '{output_filename}'")
+    print(f"Number of directly connected (outgoing) tables: {len(successors)}")
+    print("RetailTransactionTable →")
+    for t in sorted(successors):
+        print("  ↳", t)

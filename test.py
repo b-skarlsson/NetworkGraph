@@ -6,11 +6,20 @@ import matplotlib.pyplot as plt
 from ast import literal_eval
 import re
 
+
+import pandas as pd
+import io
+import json
+import networkx as nx
+import matplotlib.pyplot as plt
+from ast import literal_eval
+import re
+
 # --- 1. Load main data ---
 relations_file = "export (35).csv"
 df = pd.read_csv(relations_file)
 
-# --- 2. Load CumulativeShare data directly from text ---
+# --- 2. Load CumulativeShare data ---
 size_data = """TableName,CumulativeShare
 INVENTTRANS,0.09219508218552312
 RETAILTRANSACTIONPAYMENTTRANS,0.06543642419527503
@@ -128,7 +137,7 @@ TAXDOCUMENTROWTRANSITRELATION,0.0009916731736139416
 """
 sizes_df = pd.read_csv(io.StringIO(size_data))
 
-# --- 3. Convert names to PascalCase ---
+# --- 3. Convert to PascalCase ---
 def to_pascal_case(name: str) -> str:
     parts = re.split(r'[_\s]+', name.strip().lower())
     return ''.join(p.capitalize() for p in parts)
@@ -136,7 +145,7 @@ def to_pascal_case(name: str) -> str:
 sizes_df["TableName"] = sizes_df["TableName"].apply(to_pascal_case)
 size_dict = dict(zip(sizes_df["TableName"], sizes_df["CumulativeShare"]))
 
-# --- 4. Create directed graph and add edges ---
+# --- 4. Build directed graph ---
 G = nx.DiGraph()
 for _, row in df.iterrows():
     source = row["TableName"]
@@ -164,70 +173,53 @@ for node in size_dict.keys():
     if node not in G:
         G.add_node(node)
 
-# --- 6. Outgoing-only subgraph from RETAILTRANSACTIONSALESTRANS ---
-root_table = "Retailtransactiontable"
-
-if root_table not in G:
-    print(f"Table '{root_table}' not found in graph.")
+# --- 6. Focus on RetailTransactionTable outgoing edges ---
+root = "Retailtransactiontable"
+if root not in G:
+    print(f"Table '{root}' not found in graph.")
 else:
-    # Get all nodes reachable following *outgoing* arrows
-    descendants = nx.descendants(G, root_table)
-    descendants.add(root_table)
-    subG = G.subgraph(descendants).copy()
+    # Find direct successors (nodes that root points TO)
+    successors = list(G.successors(root))
+    sub_nodes = {root} | set(successors)
+    subG = G.subgraph(sub_nodes).copy()
 
-    # --- Draw outgoing subgraph ---
-    plt.figure(figsize=(16, 12))
-    pos = nx.kamada_kawai_layout(subG, scale=2.0)
+    # --- Layout ---
+    pos = nx.spring_layout(subG, k=1.2, iterations=200, seed=42)
+    pos[root] = [0, 0]  # center the root
 
-    out_degrees = dict(subG.out_degree())
-    max_out = max(out_degrees.values()) if out_degrees else 1
-    node_colors = [
-        (1, 1 - (out_degrees.get(n, 0) / max_out), 1 - (out_degrees.get(n, 0) / max_out))
-        for n in subG.nodes()
-    ]
-
+    # --- Node sizes and colors ---
     min_val, max_val = min(size_dict.values()), max(size_dict.values())
     node_sizes = [
-        300 + 1200 * ((size_dict.get(n, min_val) - min_val) / (max_val - min_val))
+        2000 if n == root else 500 + 1000 * ((size_dict.get(n, 0) - min_val) / (max_val - min_val))
         for n in subG.nodes()
     ]
+    node_colors = ["orange" if n == root else (0.6, 0.8, 1.0) for n in subG.nodes()]
 
-    nx.draw_networkx_nodes(subG, pos, node_size=node_sizes, node_color=node_colors, edgecolors="gray")
-    nx.draw_networkx_labels(subG, pos, font_size=8, font_weight="bold")
-    nx.draw_networkx_edges(subG, pos, alpha=0.8, arrows=True, arrowstyle="-|>", connectionstyle="arc3,rad=0.12")
+    # --- Draw ---
+    fig, ax = plt.subplots(figsize=(14, 10))
+    nx.draw_networkx_edges(subG, pos, ax=ax, alpha=0.7,
+                           arrows=True, arrowstyle="-|>", connectionstyle="arc3,rad=0.1")
+    nx.draw_networkx_nodes(subG, pos, ax=ax, node_size=node_sizes,
+                           node_color=node_colors, edgecolors="gray", alpha=0.95)
 
-    plt.title(f"Outgoing subgraph from {root_table}", fontsize=14, pad=10)
-    plt.axis("off")
+    for node, (x, y) in pos.items():
+        if node == root:
+            ax.text(x, y - 0.08, node, fontsize=13, fontweight="bold", ha="center", color="black")
+        else:
+            ax.text(x, y - 0.06, node, fontsize=10, ha="center", color="black")
+
+    ax.set_title("Direct OUTGOING relations from RetailTransactionTable", fontsize=16)
+    ax.axis("off")
     plt.tight_layout()
     plt.show()
 
-    print(f"\nNumber of tables reachable (outgoing from {root_table}): {len(subG.nodes())}")
+    # --- 7. Save names of drawn tables to CSV ---
+    output_filename = "direct_relations_from_RetailTransactionTable.csv"
+    export_df = pd.DataFrame({"TableName": [root] + sorted(successors)})
+    export_df.to_csv(output_filename, index=False, encoding="utf-8")
 
-
-  # --- Calculate total storage share ---
-    total_share = sum(size_dict.values())
-    subgraph_share = sum(size_dict.get(n, 0) for n in subG.nodes())
-    percent_of_total = (subgraph_share / total_share) * 100
-
-    print(f"\nNumber of tables reachable (outgoing from {root_table}): {len(subG.nodes())}")
-    print(f"Total storage share of these tables: {subgraph_share:.6f}")
-    print(f"Share of total storage: {percent_of_total:.2f}%")
-
-    all_nodes = set(G.nodes())
-    remaining_nodes = all_nodes - set(subG.nodes())
-    remaining_subG = G.subgraph(remaining_nodes).copy()
-    import matplotlib.pyplot as plt
-    pos = nx.kamada_kawai_layout(remaining_subG, scale=2.0)
-    node_sizes = [300 + 1200 * ((size_dict[n] - min_val) / (max_val - min_val)) for n in remaining_subG.nodes()]
-    out_degrees = dict(remaining_subG.out_degree())
-    max_out = max(out_degrees.values()) if out_degrees else 1
-    node_colors = [(1, 1 - (out_degrees.get(n,0)/max_out), 1 - (out_degrees.get(n,0)/max_out)) for n in remaining_subG.nodes()]
-
-    plt.figure(figsize=(14,10))
-    nx.draw_networkx_nodes(remaining_subG, pos, node_size=node_sizes, node_color=node_colors, edgecolors="gray")
-    nx.draw_networkx_labels(remaining_subG, pos, font_size=8, font_weight="bold")
-    nx.draw_networkx_edges(remaining_subG, pos, alpha=0.8, arrows=True, arrowstyle="-|>", connectionstyle="arc3,rad=0.12")
-    plt.title("Remaining tables (not connected from RETAILTRANSACTIONSALESTRANS)")
-    plt.axis("off")
-    plt.tight_layout()
-    plt.show()
+    print(f"\n✅ Saved table list to '{output_filename}'")
+    print(f"Number of directly connected (outgoing) tables: {len(successors)}")
+    print("RetailTransactionTable →")
+    for t in sorted(successors):
+        print("  ↳", t)
