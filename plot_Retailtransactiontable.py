@@ -217,17 +217,17 @@ else:
     remaining_nodes = all_nodes - set(subG.nodes())
     remaining_subG = G.subgraph(remaining_nodes).copy()
     import matplotlib.pyplot as plt
-pos = nx.kamada_kawai_layout(remaining_subG, scale=2.0)
-node_sizes = [300 + 1200 * ((size_dict[n] - min_val) / (max_val - min_val)) for n in remaining_subG.nodes()]
-out_degrees = dict(remaining_subG.out_degree())
-max_out = max(out_degrees.values()) if out_degrees else 1
-node_colors = [(1, 1 - (out_degrees.get(n,0)/max_out), 1 - (out_degrees.get(n,0)/max_out)) for n in remaining_subG.nodes()]
+    pos = nx.kamada_kawai_layout(remaining_subG, scale=2.0)
+    node_sizes = [300 + 1200 * ((size_dict[n] - min_val) / (max_val - min_val)) for n in remaining_subG.nodes()]
+    out_degrees = dict(remaining_subG.out_degree())
+    max_out = max(out_degrees.values()) if out_degrees else 1
+    node_colors = [(1, 1 - (out_degrees.get(n,0)/max_out), 1 - (out_degrees.get(n,0)/max_out)) for n in remaining_subG.nodes()]
 
-plt.figure(figsize=(14,10))
-nx.draw_networkx_nodes(remaining_subG, pos, node_size=node_sizes, node_color=node_colors, edgecolors="gray")
-nx.draw_networkx_labels(remaining_subG, pos, font_size=8, font_weight="bold")
-nx.draw_networkx_edges(remaining_subG, pos, alpha=0.8, arrows=True, arrowstyle="-|>", connectionstyle="arc3,rad=0.12")
-plt.title("Remaining tables (not connected from RETAILTRANSACTIONSALESTRANS)")
-plt.axis("off")
-plt.tight_layout()
-plt.show()
+    plt.figure(figsize=(14,10))
+    nx.draw_networkx_nodes(remaining_subG, pos, node_size=node_sizes, node_color=node_colors, edgecolors="gray")
+    nx.draw_networkx_labels(remaining_subG, pos, font_size=8, font_weight="bold")
+    nx.draw_networkx_edges(remaining_subG, pos, alpha=0.8, arrows=True, arrowstyle="-|>", connectionstyle="arc3,rad=0.12")
+    plt.title("Remaining tables (not connected from RETAILTRANSACTIONSALESTRANS)")
+    plt.axis("off")
+    plt.tight_layout()
+    plt.show()
