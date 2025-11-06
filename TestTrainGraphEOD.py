@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Driver ↔ related tables (centered + spread network)
----------------------------------------------------
+Driver ↔ related tables (spread network with R² + significance)
+---------------------------------------------------------------
 - Builds driver → related table graph
 - Fits regressions with bootstrapping
 - Saves coefficient and performance CSVs
-- Shows demo predictions for multiple validation environments
-- Plots interactive % error scatter plot per environment
+- Plots network:
+    • Edges: Black = significant (with mean ± CI), Grey = uncertain
+    • Nodes: Red = drivers, Blue = R² value (dark→light)
+    • Node size = importance from top_90_percent_tables3.csv
+    • Layout fully spread out (no overlap)
+- Plots total MB validation error
 """
 
 import os
@@ -48,8 +52,8 @@ LOG1P = True
 BOOTSTRAP_B = 80
 RANDOM_SEED = 42
 OUT_DIR = "out"
-NETWORK_JITTER = 0.12
-NODE_SCALE = 30000.0
+NETWORK_JITTER = 0.15
+NODE_SCALE = 3000.0
 
 
 # -------------------------------------------------
@@ -234,91 +238,70 @@ def main():
     edges_df.to_csv(os.path.join(OUT_DIR, "edge_effects_drivers.csv"), index=False)
     results_df.to_csv(os.path.join(OUT_DIR, "target_metrics.csv"), index=False)
 
-    # 5) Demo for one env + 10 others
-    demo_env = next((env for env, tot in val_actual_totals.items() if tot > 0), None)
-    if demo_env:
-        def run_demo(env_id: str, full: bool = True):
-            df_demo = df_env[df_env["new_id"] == env_id]
-            pivot = df_demo.pivot_table(index="new_id", columns="TableNameNorm", values="val").fillna(0.0)
-            total_actual, total_pred = 0.0, 0.0
-            used = 0
-            print(f"\n🧠 DEMO for environment: {env_id}")
-            print("Driver table sizes (MB):")
-            for d in drivers_norm:
-                print(f"  - {d:<30s} = {pivot.get(d, pd.Series([0.0], index=[env_id])).iloc[0]:.3f}")
-
-            for target, subdf in edges_df.groupby("Target"):
-                subdf = subdf[subdf["Significant"] == True]
-                if subdf.empty:
-                    continue
-                pred_val = 0.0
-                for _, row in subdf.iterrows():
-                    src, coef = row["Source"], row["Mean"]
-                    pred_val += coef * pivot.get(src, pd.Series([0.0], index=[env_id])).iloc[0]
-                actual_val = pivot.get(target, pd.Series([np.nan], index=[env_id])).iloc[0]
-                if pd.isna(actual_val):
-                    continue
-                used += 1
-                total_actual += actual_val
-                total_pred += pred_val
-                if full:
-                    print(f"\nTarget: {target}")
-                    print(f"  Actual = {actual_val:.3f} MB, Predicted = {pred_val:.3f} MB")
-                    for _, row in subdf.iterrows():
-                        src, coef = row["Source"], row["Mean"]
-                        val = pivot.get(src, pd.Series([0.0], index=[env_id])).iloc[0]
-                        print(f"    + ({coef:.3f}) × {src} ({val:.3f} MB)")
-
-            diff = total_pred - total_actual
-            pct_err = 100 * abs(diff) / total_actual if total_actual > 0 else np.nan
-            print(f"\n📊 Summary for {env_id}:")
-            print(f"  Predicted {used} tables.")
-            print(f"  Total actual    = {total_actual:.3f} MB")
-            print(f"  Total predicted = {total_pred:.3f} MB")
-            print(f"  Difference      = {diff:+.3f} MB ({pct_err:.2f}% error)")
-
-        print("\n🧠 DEMO: Step-by-step for one validation environment (using final coefficients)")
-        print("--------------------------------------------------")
-        run_demo(demo_env, full=True)
-
-        print("\n🔁 Now showing 10 more validation environments (summary only):")
-        shown = 0
-        for env in val_envs:
-            if env == demo_env:
-                continue
-            run_demo(env, full=False)
-            shown += 1
-            if shown >= 10:
-                break
-
-    # 6) Interactive scatter plot (% error per env)
-    env_errors = []
-    for env_id in val_actual_totals.keys():
-        actual, pred = val_actual_totals[env_id], val_pred_totals[env_id]
-        if actual > 0:
-            if LOG1P:
-                actual, pred = np.expm1(actual), np.expm1(pred)
-            pct_error = 100 * abs(pred - actual) / actual
-            env_errors.append((env_id, pct_error))
-
-    if env_errors:
-        env_df = pd.DataFrame(env_errors, columns=["EnvID", "PctError"])
-        env_df = env_df.sort_values("PctError").reset_index(drop=True)
-        plt.figure(figsize=(10, 6))
-        plt.scatter(range(len(env_df)), env_df["PctError"], color="blue", alpha=0.7)
-        plt.xlabel("Validation environments (sorted by error)")
-        plt.ylabel("Absolute percentage error (%)")
-        plt.title("Prediction accuracy across validation environments")
-        plt.grid(True, linestyle="--", alpha=0.5)
-        plt.tight_layout()
-        avg_err, med_err = env_df["PctError"].mean(), env_df["PctError"].median()
-        print(f"\n✅ Environment error plot ready ({len(env_df)} envs)")
-        print(f"   Average error: {avg_err:.2f}% | Median: {med_err:.2f}%")
-        plt.show()
-    else:
-        print("⚠️ No environments with enough data for error plot.")
     # -------------------------------------------------
-    # 7) Plot total MB error for ALL validation environments
+    # 5) Plot network — black/grey edges, labeled, blue nodes by R²
+    # -------------------------------------------------
+    try:
+        sub_nodes = set(drivers_norm) | set(connected_targets)
+        subG = G.subgraph(sub_nodes).copy()
+
+        for u, v in list(subG.edges()):
+            row = edges_df[(edges_df["Source"] == u) & (edges_df["Target"] == v)]
+            if len(row) > 0:
+                subG[u][v]["sig"] = bool(row["Significant"].iloc[0])
+                subG[u][v]["mean"] = float(row["Mean"].iloc[0])
+                subG[u][v]["ci"] = float(row["CI90"].iloc[0])
+            else:
+                subG[u][v]["sig"] = False
+                subG[u][v]["mean"] = 0.0
+                subG[u][v]["ci"] = 0.0
+
+        # layout: more spread out
+        pos = nx.spring_layout(subG, k=6.0, iterations=600, seed=RANDOM_SEED)
+        pos_arr = np.array(list(pos.values()))
+        pos_arr += np.random.uniform(-NETWORK_JITTER, NETWORK_JITTER, pos_arr.shape)
+        pos = {n: tuple(p) for n, p in zip(subG.nodes(), pos_arr)}
+
+        # node colors and sizes
+        r2_map = {normalize(r["Target"]): r["R2_val"] for _, r in results_df.iterrows()}
+        sizes_df = pd.read_csv(SIZES_FILE)
+        sizes_df["TableNameNorm"] = sizes_df["TableName"].apply(normalize)
+        size_dict = dict(zip(sizes_df["TableNameNorm"], sizes_df["CumulativeShare"]))
+
+        node_colors, node_sizes = [], []
+        for n in subG.nodes():
+            if n in drivers_norm:
+                node_colors.append("#e41a1c")  # red driver
+            else:
+                r2_val = r2_map.get(n, 0.0)
+                node_colors.append(plt.cm.Blues(0.3 + 0.7 * max(0, min(1, r2_val))))
+            node_sizes.append(NODE_SCALE * (size_dict.get(n, 0.001) ** 0.5))
+
+        # edges
+        edge_colors = ["black" if subG[u][v]["sig"] else "grey" for u, v in subG.edges()]
+        edge_widths = [2 if subG[u][v]["sig"] else 0.8 for u, v in subG.edges()]
+
+        plt.figure(figsize=(20, 16))
+        nx.draw_networkx_edges(subG, pos, edge_color=edge_colors, width=edge_widths,
+                               arrows=True, arrowstyle="-|>", connectionstyle="arc3,rad=0.1", alpha=0.9)
+        nx.draw_networkx_nodes(subG, pos, node_size=node_sizes, node_color=node_colors, edgecolors="gray", linewidths=1.5)
+        nx.draw_networkx_labels(subG, pos, font_size=9, font_weight="bold")
+
+        # edge labels for significant edges
+        edge_labels = {(u, v): f"{subG[u][v]['mean']:.2f}±{subG[u][v]['ci']:.2f}"
+                       for u, v in subG.edges() if subG[u][v]["sig"]}
+        nx.draw_networkx_edge_labels(subG, pos, edge_labels=edge_labels, font_size=7, font_color="black")
+
+        plt.title("Driver → Related Tables\nEdges: Black = significant (with mean±CI), Grey = uncertain\nNode color = R² (blue scale), size = importance")
+        plt.axis("off")
+        plt.tight_layout()
+        plt.show()
+
+    except Exception as e:
+        print(f"⚠️ Network plot skipped: {e}")
+
+    # -------------------------------------------------
+    # 6) Plot total MB error for validation environments
     # -------------------------------------------------
     print("\n📈 Calculating total actual vs predicted sizes for all validation environments...\n")
 
@@ -354,16 +337,13 @@ def main():
                 "ErrorPct": pct_err
             })
 
-    if not env_summary:
-        print("⚠️ No environments with valid predictions.")
-    else:
+    if env_summary:
         env_df = pd.DataFrame(env_summary).sort_values("ErrorPct", ascending=False).reset_index(drop=True)
         avg_err = env_df["ErrorPct"].mean()
         med_err = env_df["ErrorPct"].median()
         print(f"✅ Computed errors for {len(env_df)} environments "
               f"(Avg error: {avg_err:.2f}%, Median: {med_err:.2f}%)")
 
-        # --- Plot ---
         fig, ax1 = plt.subplots(figsize=(12, 6))
         x = range(len(env_df))
         width = 0.35
@@ -385,6 +365,9 @@ def main():
         plt.grid(True, linestyle="--", alpha=0.5)
         plt.tight_layout()
         plt.show()
+    else:
+        print("⚠️ No environments with valid predictions.")
+
 
 if __name__ == "__main__":
     main()
